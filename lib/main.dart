@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_blue/flutter_blue.dart';
 import 'constants.dart';
 
 void main() {
@@ -37,7 +38,12 @@ class Body extends StatefulWidget {
 class _BodyState extends State<Body> {
   //0 for left up, increase clockwise
   var curPositionId = 3;
-  // FlutterBlue flutterBlue = FlutterBlue.instance;
+  FlutterBlue flutterBlue = FlutterBlue.instance;
+  BluetoothDevice bluetoothDevice;
+  BluetoothService bluetoothService;
+  BluetoothCharacteristic bluetoothCharacteristic;
+  List<int> readValues = [];
+  dynamic ax, ay, az, ox, oy, oz, mx, my, mz;
 
   //Widgets part:
   Widget curPositionSign = Text(
@@ -50,28 +56,88 @@ class _BodyState extends State<Body> {
 
   //Functions part:
   void playerMove(MoveDirection dir) {
+    print(dir.toString());
     switch (dir) {
       case MoveDirection.moveToLeft:
-        if (curPositionId % 2 == 0) curPositionId--;
+        if (curPositionId == 2 || curPositionId == 4)
+          setState(() {
+            curPositionId--;
+          });
         break;
       case MoveDirection.moveToRight:
-        if (curPositionId % 2 == 1) curPositionId++;
+        if (curPositionId == 1 || curPositionId == 3)
+          setState(() {
+            curPositionId++;
+          });
         break;
       case MoveDirection.moveForward:
-        if (curPositionId > 2) curPositionId -= 2;
+        if (curPositionId == 3 || curPositionId == 4)
+          setState(() {
+            curPositionId -= 2;
+          });
         break;
       case MoveDirection.moveBackward:
-        if (curPositionId < 3) curPositionId += 2;
+        if (curPositionId == 1 || curPositionId == 2)
+          setState(() {
+            curPositionId += 2;
+          });
         break;
     }
   }
 
   void connectToDevice() {
-    // flutterBlue
-    //     .startScan(
-    //       timeout: Duration(seconds: 3),
-    //     )
-    //     .then((value) => print(value));
+    flutterBlue
+        .startScan(
+      timeout: Duration(seconds: 3),
+    )
+        .then((results) async {
+      for (ScanResult r in results) {
+        if (r.device.name.contains("NAXSEN")) {
+          print("device found");
+          await r.device.connect();
+          return r.device;
+        } else {
+          print("device not found");
+        }
+      }
+      return null;
+    }).then((device) async {
+      if (device == null) {
+        return null;
+      } else {
+        setState(() {
+          bluetoothDevice = device;
+        });
+        await bluetoothDevice.discoverServices().then((services) async {
+          for (BluetoothService s in services) {
+            if (s.uuid.toString().toUpperCase().substring(4, 8) == "1600") {
+              print("service 1600 found");
+              setState(() {
+                bluetoothService = s;
+                bluetoothCharacteristic =
+                    bluetoothService.characteristics.firstWhere((c) {
+                  return c.uuid.toString().contains("1601");
+                });
+              });
+
+              bluetoothCharacteristic.value.listen((value) {
+                mx = value[0] * 256 + value[1];
+                if (mx > 32768) mx = mx - 65536;
+                mx = mx / 32768;
+                if (mx > 0.2) playerMove(MoveDirection.moveToRight);
+                if (mx < -0.2) playerMove(MoveDirection.moveToLeft);
+                print("${curPositionId}");
+                setState(() {
+                  readValues = value;
+                  mx = mx;
+                });
+              });
+              await bluetoothCharacteristic.setNotifyValue(true);
+            }
+          }
+        });
+      }
+    });
   }
 
   @override
@@ -101,7 +167,11 @@ class _BodyState extends State<Body> {
                     ),
                     Spacer(),
                     ElevatedButton(
-                      onPressed: null,
+                      onPressed: (() {
+                        flutterBlue.connectedDevices.then((devices) {
+                          for (BluetoothDevice d in devices) d.disconnect();
+                        });
+                      }),
                       child: Text(
                         "斷開設備",
                         style: TextStyle(
@@ -113,7 +183,7 @@ class _BodyState extends State<Body> {
                   ],
                 ),
                 SizedBox(
-                  height: 100,
+                  height: 80,
                 ),
                 Row(
                   children: [
@@ -169,6 +239,18 @@ class _BodyState extends State<Body> {
                     Spacer(),
                   ],
                 ),
+                Text(
+                  readValues.toString(),
+                ),
+                Text("加速度：x${mx}"),
+                // children: bluetoothService.characteristics.map((c) {
+                //   return StreamBuilder<List<int>>(
+                //       initialData: [],
+                //       stream: c.value,
+                //       builder: (context, snapshot) {
+                //         return Text(c.uuid.toString().substring(4, 8));
+                //       });
+                // }).toList(),
               ],
             ),
           ),
